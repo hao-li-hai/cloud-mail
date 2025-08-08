@@ -9,7 +9,7 @@ import accountService from './account-service';
 import userService from './user-service';
 import constant from '../const/constant';
 import BizError from '../error/biz-error';
-import { t } from '../i18n/i18n'
+import { t } from '../i18n/i18n.js'
 import verifyRecordService from './verify-record-service';
 
 const settingService = {
@@ -21,18 +21,22 @@ const settingService = {
 	},
 
 	async query(c) {
-		const setting = await c.env.kv.get(KvConst.SETTING, { type: 'json' });
-		let domainList = c.env.domain;
-		if (typeof domainList === 'string') {
-			throw new BizError(t('notJsonDomain'));
-		}
-		domainList = domainList.map(item => '@' + item);
-		setting.domainList = domainList;
-		return setting;
+		const settingJson = await c.env.kv.get(KvConst.SETTING);
+        if (!settingJson) {
+            // 如果KV中没有设置，可以抛出错误或返回一个默认结构
+            throw new BizError('Settings not found in KV store');
+        }
+        const settingData = JSON.parse(settingJson);
+
+		// [关键修改] 不再从环境配置 c.env.domain 读取多域名
+		// 而是直接返回一个空的域名列表，因为前端不再需要它
+		const domainList = [];
+
+		settingData.domainList = domainList;
+		return settingData;
 	},
 
 	async get(c) {
-
 		const [settingRow, recordList] = await Promise.all([
 			await this.query(c),
 			verifyRecordService.selectListByIP(c)
@@ -73,41 +77,27 @@ const settingService = {
 	},
 
 	async setBackground(c, params) {
-
 		const settingRow = await this.query(c);
-
 		let { background } = params
-
 		if (background && !background.startsWith('http')) {
-
 			if (!c.env.r2) {
 				throw new BizError(t('noOsUpBack'));
 			}
-
 			if (!settingRow.r2Domain) {
 				throw new BizError(t('noOsDomainUpBack'));
 			}
-
 			const file = fileUtils.base64ToFile(background)
-
 			const arrayBuffer = await file.arrayBuffer();
 			background = constant.BACKGROUND_PREFIX + await fileUtils.getBuffHash(arrayBuffer) + fileUtils.getExtFileName(file.name);
-
-
-			await r2Service.putObj(c, background, arrayBuffer, {
-				contentType: file.type
-			});
-
+			await r2Service.putObj(c, background, arrayBuffer, { contentType: file.type });
 		}
-
-		if (settingRow.background) {
+		if (settingRow.background && settingRow.background !== background) {
 			try {
 				await r2Service.delete(c, settingRow.background);
 			} catch (e) {
 				console.error(e)
 			}
 		}
-
 		await orm(c).update(setting).set({ background }).run();
 		await this.refresh(c);
 		return background;
@@ -120,9 +110,7 @@ const settingService = {
 	},
 
 	async websiteConfig(c) {
-
-		const settingRow = await this.get(c)
-
+		const settingRow = await this.get(c);
 		return {
 			register: settingRow.register,
 			title: settingRow.title,
@@ -136,7 +124,7 @@ const settingService = {
 			siteKey: settingRow.siteKey,
 			background: settingRow.background,
 			loginOpacity: settingRow.loginOpacity,
-			domainList:settingRow.domainList,
+			domainList: settingRow.domainList, // 这里会返回一个空数组，符合我们的预期
 			regKey: settingRow.regKey,
 			regVerifyOpen: settingRow.regVerifyOpen,
 			addVerifyOpen: settingRow.addVerifyOpen,
