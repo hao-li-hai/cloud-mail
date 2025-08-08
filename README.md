@@ -6,7 +6,7 @@
 <h1>Cloud Mail</h1>
 </div>
 <div align="center">
-    <h4>使用Vue3开发的响应式简约邮箱服务，支持邮件发送附件收发，可以部署到Cloudflare云平台实现免费白嫖🎉</h4> 
+    <h4>使用Vue3开发的响应式简约邮箱服务 ，支持邮件发送附件收发，可以部署到Cloudflare云平台实现免费白嫖🎉</h4> 
 </div>
 <div align="center">
     <span>简体中文 | <a href="/README-en.md" style="margin-left: 5px">English </a></span>
