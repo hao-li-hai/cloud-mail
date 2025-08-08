@@ -14,7 +14,7 @@
           <span class="form-desc" v-if="show === 'login'">{{$t('loginTitle')}}</span>
           <span class="form-desc" v-else>{{$t('regTitle')}}</span>
           
-          <!-- 登录表单 (无域名后缀) -->
+          <!-- 登录表单 (无1域名后缀) -->
           <div v-show="show === 'login'">
             <el-input class="email-input" v-model="form.email" type="text" :placeholder="$t('emailAccount')" autocomplete="off" />
             <el-input v-model="form.password" :placeholder="$t('password')" type="password" autocomplete="off" />
