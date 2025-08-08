@@ -13,156 +13,144 @@ import { t } from '../i18n/i18n.js'
 import verifyRecordService from './verify-record-service';
 
 const settingService = {
-
-    _getKv: (c) => {
-        const kv = c.env.kv || (c.bindings && c.bindings.kv);
-        if (!kv) {
-            throw new Error("KV namespace not found in context. Check wrangler.toml bindings.");
+    _getBinding: (c, bindingName) => {
+        const binding = c.env[bindingName] || (c.bindings && c.bindings[bindingName]);
+        if (!binding) {
+            console.error(`[FATAL] Binding '${bindingName}' not found.`);
+            // 生产环境中，最好有一个优雅的降级，而不是让所有请求都失败
+            if (bindingName === 'kv') return null;
+            if (bindingName === 'domain') return [];
         }
-        return kv;
+        return binding;
     },
 
-	async refresh(c) {
-		const settingRow = await orm(c).select().from(setting).get();
-		settingRow.resendTokens = JSON.parse(settingRow.resendTokens);
-		await this._getKv(c).put(KvConst.SETTING, JSON.stringify(settingRow));
-	},
-
-	async query(c) {
-		const settingJson = await this._getKv(c).get(KvConst.SETTING);
-        if (!settingJson) {
-            const defaultSetting = { resendTokens: '{}' };
-            await this._getKv(c).put(KvConst.SETTING, JSON.stringify(defaultSetting));
-            return { ...defaultSetting, domainList: []};
+    async refresh(c) {
+        try {
+            const settingRow = await orm(c).select().from(setting).get();
+            if(settingRow) {
+                settingRow.resendTokens = JSON.parse(settingRow.resendTokens || '{}');
+                const kv = this._getBinding(c, 'kv');
+                if (kv) {
+                    await kv.put(KvConst.SETTING, JSON.stringify(settingRow));
+                }
+            }
+        } catch (e) {
+            console.error("Error refreshing settings:", e);
         }
-        const settingData = JSON.parse(settingJson);
+    },
 
-		let domainList = c.env.domain || (c.bindings && c.bindings.domain);
-		if (typeof domainList === 'string') {
-			domainList = domainList.split(',').map(item => item.trim());
-		}
-		if (!Array.isArray(domainList)) {
-			console.warn('`domain` is not an array, fallback to empty array.');
-            domainList = [];
-		}
+    async query(c) {
+        let settingData;
+        const kv = this._getBinding(c, 'kv');
+        
+        if (kv) {
+            const settingJson = await kv.get(KvConst.SETTING, { type: 'json' }).catch(() => null);
+             if (settingJson) {
+                settingData = settingJson;
+            }
+        }
 
-		settingData.domainList = domainList.map(item => '@' + item);
-		return settingData;
-	},
+        if (!settingData) {
+            console.warn("Settings not found in KV, fetching from DB or using defaults.");
+            const dbSetting = await orm(c).select().from(setting).get().catch(() => null);
+            if (dbSetting) {
+                settingData = dbSetting;
+                settingData.resendTokens = JSON.parse(settingData.resendTokens || '{}');
+            } else {
+                settingData = { resendTokens: {} }; // 使用一个最小化的默认对象
+            }
+            if (kv) {
+                await kv.put(KvConst.SETTING, JSON.stringify(settingData));
+            }
+        }
 
-	async get(c) {
-		const [settingRow, recordList] = await Promise.all([
-			this.query(c),
-			verifyRecordService ? verifyRecordService.selectListByIP(c) : Promise.resolve([])
-		]);
+        // 硬编码单域名，不再依赖环境配置
+        settingData.domainList = ['@student.pmrb.edu.pl'];
+        
+        return settingData;
+    },
 
-		settingRow.secretKey = settingRow.secretKey ? `${settingRow.secretKey.slice(0, 12)}******` : null;
-		Object.keys(settingRow.resendTokens || {}).forEach(key => {
-			settingRow.resendTokens[key] = `${settingRow.resendTokens[key].slice(0, 12)}******`;
-		});
+    async get(c) {
+        const [settingRow, recordList] = await Promise.all([
+            this.query(c),
+            verifyRecordService ? verifyRecordService.selectListByIP(c) : Promise.resolve([])
+        ]);
 
-		let regVerifyOpen = false
-		let addVerifyOpen = false
+        settingRow.secretKey = settingRow.secretKey ? `${settingRow.secretKey.slice(0, 12)}******` : null;
+        Object.keys(settingRow.resendTokens || {}).forEach(key => {
+            const token = settingRow.resendTokens[key];
+             if(typeof token === 'string' && token.length > 12) {
+                settingRow.resendTokens[key] = `${token.slice(0, 12)}******`;
+            }
+        });
 
-		if (recordList && recordList.length > 0) {
+        let regVerifyOpen = false, addVerifyOpen = false;
+        
+        if (Array.isArray(recordList)) {
             recordList.forEach(row => {
                 if (row.type === verifyRecordType.REG) {
-                    regVerifyOpen = row.count >= settingRow.regVerifyCount
+                    regVerifyOpen = row.count >= settingRow.regVerifyCount;
                 }
                 if (row.type === verifyRecordType.ADD) {
-                    addVerifyOpen = row.count >= settingRow.addVerifyCount
+                    addVerifyOpen = row.count >= settingRow.addVerifyCount;
                 }
-            })
+            });
         }
 
-		settingRow.regVerifyOpen = regVerifyOpen
-		settingRow.addVerifyOpen = addVerifyOpen
+        settingRow.regVerifyOpen = regVerifyOpen;
+        settingRow.addVerifyOpen = addVerifyOpen;
 
-		return settingRow;
-	},
+        return settingRow;
+    },
 
-	async set(c, params) {
-		const settingData = await this.query(c);
-		let resendTokens = { ...settingData.resendTokens, ...params.resendTokens };
-		Object.keys(resendTokens).forEach(domain => {
-			if (!resendTokens[domain]) delete resendTokens[domain];
-		});
-		params.resendTokens = JSON.stringify(resendTokens);
-		await orm(c).update(setting).set({ ...params }).returning().get();
-		await this.refresh(c);
-	},
+    async set(c, params) {
+        const settingData = await this.query(c);
+        let resendTokens = { ...settingData.resendTokens, ...params.resendTokens };
+        Object.keys(resendTokens).forEach(domain => {
+            if (!resendTokens[domain]) delete resendTokens[domain];
+        });
+        params.resendTokens = JSON.stringify(resendTokens);
+        await orm(c).update(setting).set({ ...params }).returning().get();
+        await this.refresh(c);
+    },
 
-	async setBackground(c, params) {
-		const settingRow = await this.query(c);
-		let { background } = params
-		if (background && !background.startsWith('http')) {
-			const r2Binding = c.env.r2 || (c.bindings && c.bindings.r2);
-			if (!r2Binding) {
-				throw new BizError(t('noOsUpBack'));
-			}
-			if (!settingRow.r2Domain) {
-				throw new BizError(t('noOsDomainUpBack'));
-			}
-			const file = fileUtils.base64ToFile(background)
-			const arrayBuffer = await file.arrayBuffer();
-			background = constant.BACKGROUND_PREFIX + await fileUtils.getBuffHash(arrayBuffer) + fileUtils.getExtFileName(file.name);
-			await r2Service.putObj(c, background, arrayBuffer, {
-				contentType: file.type
-			});
-		}
-		if (settingRow.background && settingRow.background !== background) {
-			try {
-				await r2Service.delete(c, settingRow.background);
-			} catch (e) {
-				console.error(e)
-			}
-		}
-		await orm(c).update(setting).set({ background }).run();
-		await this.refresh(c);
-		return background;
-	},
+    async setBackground(c, params) {
+        const settingRow = await this.query(c);
+        let { background } = params;
 
-	async physicsDeleteAll(c) {
-		await emailService.physicsDeleteAll(c);
-		await accountService.physicsDeleteAll(c);
-		await userService.physicsDeleteAll(c);
-	},
-    
-	async websiteConfig(c) {
-		// [关键修改] 使用修复后的 get 函数
-		const settingRow = await this.get(c);
+        if (background && !background.startsWith('http')) {
+            const r2Binding = this._getBinding(c, 'r2');
+            if (!r2Binding) throw new BizError(t('noOsUpBack'));
+            if (!settingRow.r2Domain) throw new BizError(t('noOsDomainUpBack'));
 
-		// [关键修改] 硬编码您的单域名给前端
-        // 注意：前端 login/index.vue 不再使用这个值了，但其他地方可能需要
-		settingRow.domainList = ['@student.pmrb.edu.pl'];
-        
-		return {
-			register: settingRow.register,
-			title: settingRow.title,
-			manyEmail: settingRow.manyEmail,
-			addEmail: settingRow.addEmail,
-			autoRefreshTime: settingRow.autoRefreshTime,
-			addEmailVerify: settingRow.addEmailVerify,
-			registerVerify: settingRow.registerVerify,
-			send: settingRow.send,
-			r2Domain: settingRow.r2Domain,
-			siteKey: settingRow.siteKey,
-			background: settingRow.background,
-			loginOpacity: settingRow.loginOpacity,
-			domainList: settingRow.domainList,
-			regKey: settingRow.regKey,
-			regVerifyOpen: settingRow.regVerifyOpen,
-			addVerifyOpen: settingRow.addVerifyOpen,
-			noticeTitle: settingRow.noticeTitle,
-			noticeContent: settingRow.noticeContent,
-			noticeType: settingRow.noticeType,
-			noticeDuration: settingRow.noticeDuration,
-			noticePosition: settingRow.noticePosition,
-			noticeWidth: settingRow.noticeWidth,
-			noticeOffset: settingRow.noticeOffset,
-			notice: settingRow.notice,
-		};
-	}
+            const file = fileUtils.base64ToFile(background);
+            const arrayBuffer = await file.arrayBuffer();
+            background = constant.BACKGROUND_PREFIX + await fileUtils.getBuffHash(arrayBuffer) + fileUtils.getExtFileName(file.name);
+            await r2Service.putObj(c, background, arrayBuffer, { contentType: file.type });
+        }
+        if (settingRow.background && settingRow.background !== background) {
+            try {
+                await r2Service.delete(c, settingRow.background);
+            } catch (e) {
+                console.error(e)
+            }
+        }
+        await orm(c).update(setting).set({ background }).run();
+        await this.refresh(c);
+        return background;
+    },
+
+    async physicsDeleteAll(c) {
+        await emailService.physicsDeleteAll(c);
+        await accountService.physicsDeleteAll(c);
+        await userService.physicsDeleteAll(c);
+    },
+
+    async websiteConfig(c) {
+        const settingRow = await this.get(c);
+        // 确保返回的 domainList 为空，因为前端不需要它了
+        settingRow.domainList = []; 
+        return settingRow;
+    }
 };
-
 export default settingService;
