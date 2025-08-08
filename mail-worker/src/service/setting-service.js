@@ -14,55 +14,66 @@ import verifyRecordService from './verify-record-service';
 
 const settingService = {
 
+    _getKv: (c) => {
+        const kv = c.env.kv || (c.bindings && c.bindings.kv);
+        if (!kv) {
+            throw new Error("KV namespace not found in context. Check wrangler.toml bindings.");
+        }
+        return kv;
+    },
+
 	async refresh(c) {
 		const settingRow = await orm(c).select().from(setting).get();
 		settingRow.resendTokens = JSON.parse(settingRow.resendTokens);
-		await c.env.kv.put(KvConst.SETTING, JSON.stringify(settingRow));
+		await this._getKv(c).put(KvConst.SETTING, JSON.stringify(settingRow));
 	},
 
 	async query(c) {
-		const settingJson = await c.env.kv.get(KvConst.SETTING);
-		if (!settingJson) {
-			throw new BizError('Settings not found in KV store', 500);
-		}
-		const settingData = JSON.parse(settingJson);
-  
-		let domainList = c.env.domain;
+		const settingJson = await this._getKv(c).get(KvConst.SETTING);
+        if (!settingJson) {
+            const defaultSetting = { resendTokens: '{}' };
+            await this._getKv(c).put(KvConst.SETTING, JSON.stringify(defaultSetting));
+            return { ...defaultSetting, domainList: []};
+        }
+        const settingData = JSON.parse(settingJson);
+
+		let domainList = c.env.domain || (c.bindings && c.bindings.domain);
 		if (typeof domainList === 'string') {
-			domainList = domainList.split(',');
+			domainList = domainList.split(',').map(item => item.trim());
 		}
-		// 确保 domainList 是一个数组
 		if (!Array.isArray(domainList)) {
-			throw new BizError(t('notJsonDomain'));
+			console.warn('`domain` is not an array, fallback to empty array.');
+            domainList = [];
 		}
-  
-		domainList = domainList.map(item => '@' + item.trim());
-		settingData.domainList = domainList;
+
+		settingData.domainList = domainList.map(item => '@' + item);
 		return settingData;
 	},
 
 	async get(c) {
 		const [settingRow, recordList] = await Promise.all([
-			await this.query(c),
-			verifyRecordService.selectListByIP(c)
+			this.query(c),
+			verifyRecordService ? verifyRecordService.selectListByIP(c) : Promise.resolve([])
 		]);
 
 		settingRow.secretKey = settingRow.secretKey ? `${settingRow.secretKey.slice(0, 12)}******` : null;
-		Object.keys(settingRow.resendTokens).forEach(key => {
+		Object.keys(settingRow.resendTokens || {}).forEach(key => {
 			settingRow.resendTokens[key] = `${settingRow.resendTokens[key].slice(0, 12)}******`;
 		});
 
 		let regVerifyOpen = false
 		let addVerifyOpen = false
 
-		recordList.forEach(row => {
-			if (row.type === verifyRecordType.REG) {
-				regVerifyOpen = row.count >= settingRow.regVerifyCount
-			}
-			if (row.type === verifyRecordType.ADD) {
-				addVerifyOpen = row.count >= settingRow.addVerifyCount
-			}
-		})
+		if (recordList && recordList.length > 0) {
+            recordList.forEach(row => {
+                if (row.type === verifyRecordType.REG) {
+                    regVerifyOpen = row.count >= settingRow.regVerifyCount
+                }
+                if (row.type === verifyRecordType.ADD) {
+                    addVerifyOpen = row.count >= settingRow.addVerifyCount
+                }
+            })
+        }
 
 		settingRow.regVerifyOpen = regVerifyOpen
 		settingRow.addVerifyOpen = addVerifyOpen
@@ -85,7 +96,8 @@ const settingService = {
 		const settingRow = await this.query(c);
 		let { background } = params
 		if (background && !background.startsWith('http')) {
-			if (!c.env.r2) {
+			const r2Binding = c.env.r2 || (c.bindings && c.bindings.r2);
+			if (!r2Binding) {
 				throw new BizError(t('noOsUpBack'));
 			}
 			if (!settingRow.r2Domain) {
@@ -115,18 +127,15 @@ const settingService = {
 		await accountService.physicsDeleteAll(c);
 		await userService.physicsDeleteAll(c);
 	},
-
-	// ### 这是唯一的、最关键的修改点 ###
+    
 	async websiteConfig(c) {
-		// 不再调用 this.get(c)，因为它内部的 verifyRecordService 可能会在冷启动时导致崩溃。
-		// 我们直接调用 this.query(c)，因为它只获取最基础的数据库配置，是安全的。
-		const settingRow = await this.query(c);
+		// [关键修改] 使用修复后的 get 函数
+		const settingRow = await this.get(c);
 
-		// 由于 this.get(c) 中的逻辑没有执行，我们需要手动补上这些布尔值的默认值。
-		// 对于一个未登录的配置请求，它们默认为 false 是完全合理的。
-		settingRow.regVerifyOpen = false;
-		settingRow.addVerifyOpen = false;
-
+		// [关键修改] 硬编码您的单域名给前端
+        // 注意：前端 login/index.vue 不再使用这个值了，但其他地方可能需要
+		settingRow.domainList = ['@student.pmrb.edu.pl'];
+        
 		return {
 			register: settingRow.register,
 			title: settingRow.title,
