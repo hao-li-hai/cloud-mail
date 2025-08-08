@@ -27,7 +27,7 @@ const loginService = {
 
 	async register(c, params) {
 		// [关键修改] email 此时是前缀
-		let { email, password, token, code } = params; 
+		let { email, password, token, code } = params;
 		// [关键修改] 在后端拼接完整邮箱
 		const fullEmail = email + YOUR_DOMAIN_TO_APPEND;
 
@@ -38,7 +38,12 @@ const loginService = {
 		if (password.length > 30) throw new BizError(t('pwdLengthLimit'));
 		if (email.length > 30) throw new BizError(t('emailLengthLimit')); // 验证前缀长度
 		if (password.length < 6) throw new BizError(t('pwdMinLengthLimit'));
-		if (!c.env.domain.includes(emailUtils.getDomain(fullEmail))) throw new BizError(t('notEmailDomain'));  // 使用 fullEmail 验证
+		
+        // [关键修改] 从环境配置中获取原始域名列表
+        const envDomains = Array.isArray(c.env.domain) ? c.env.domain : [c.env.domain];
+        if (!envDomains.includes(emailUtils.getDomain(fullEmail))) {
+			throw new BizError(t('notEmailDomain'));
+		}
 
 		let type = null;
 		let regKeyId = 0
