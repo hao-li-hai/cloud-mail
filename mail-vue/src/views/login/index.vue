@@ -14,7 +14,6 @@
           <span class="form-desc" v-if="show === 'login'">{{$t('loginTitle')}}</span>
           <span class="form-desc" v-else>{{$t('regTitle')}}</span>
           
-          <!-- [修改点] 登录表单：移除了域名后缀 -->
           <div v-show="show === 'login'">
             <el-input class="email-input" v-model="form.email" type="text" :placeholder="$t('emailAccount')" autocomplete="off" />
             <el-input v-model="form.password" :placeholder="$t('password')" type="password" autocomplete="off">
@@ -24,7 +23,6 @@
             </el-button>
           </div>
           
-          <!-- [修改点] 注册表单：保留了域名后缀 -->
           <div v-show="show !== 'login'">
             <el-input class="email-input" v-model="registerForm.email" type="text" :placeholder="$t('emailAccount')" autocomplete="off">
               <template #append>
@@ -80,7 +78,8 @@
 
 <script setup>
 import router from "@/router";
-import {computed, nextTick, reactive, ref} from "vue";
+// [修改点] 增加了 import 'watch'
+import {computed, nextTick, reactive, ref, watch} from "vue";
 import {login} from "@/request/login.js";
 import {register} from "@/request/login.js";
 import {isEmail} from "@/utils/verify-utils.js";
@@ -93,6 +92,7 @@ import {cvtR2Url} from "@/utils/convert.js";
 import {loginUserInfo} from "@/request/my.js";
 import {permsToRouter} from "@/perm/perm.js";
 import {useI18n} from "vue-i18n";
+import { storeToRefs } from 'pinia';
 
 const { t } = useI18n();
 const accountStore = useAccountStore();
@@ -104,9 +104,7 @@ const show = ref('login')
 const form = reactive({
   email: '',
   password: '',
-
 });
-// [修改点] 恢复了注册时需要的JS变量
 const mySelect = ref()
 const suffix = ref('')
 const registerForm = reactive({
@@ -115,13 +113,23 @@ const registerForm = reactive({
   confirmPassword: '',
   code: null
 })
-const domainList = settingStore.domainList;
+// [修改点] 使用 storeToRefs 获取 domainList 以保持响应性
+const { domainList } = storeToRefs(settingStore);
 const registerLoading = ref(false)
-suffix.value = domainList[0]
 const verifyShow = ref(false)
 let verifyToken = ''
 let turnstileId = null
 let botJsError = ref(false)
+
+// [修改点] 使用 watch 来安全地设置 suffix 的默认值
+watch(domainList, (newDomainList) => {
+  // 当 domainList 加载完成并且有内容时，才设置默认值
+  if (newDomainList && newDomainList.length > 0) {
+    if (!suffix.value) { // 只有在suffix为空时才设置，避免覆盖用户选择
+      suffix.value = newDomainList[0];
+    }
+  }
+}, { immediate: true }); // immediate: true 确保在组件加载时立即运行一次
 
 window.onTurnstileSuccess = (token) => {
   verifyToken = token;
@@ -164,7 +172,6 @@ const openSelect = () => {
   mySelect.value.toggleMenu()
 }
 
-// [修改点] 修改登录提交逻辑
 const submit = () => {
 
   if (!form.email) {
@@ -175,8 +182,6 @@ const submit = () => {
     })
     return
   }
-  
-  // 删除了isEmail验证
 
   if (!form.password) {
     ElMessage({
@@ -188,7 +193,6 @@ const submit = () => {
   }
 
   loginLoading.value = true
-  // 只发送前缀和密码
   login(form.email, form.password).then(async data => {
     localStorage.setItem('token', data.token)
     const user = await loginUserInfo();
@@ -205,7 +209,6 @@ const submit = () => {
   })
 }
 
-// [修改点] 恢复注册提交逻辑为原始状态
 function submitRegister() {
 
   if (!registerForm.email) {
@@ -216,7 +219,8 @@ function submitRegister() {
     })
     return
   }
-
+  
+  // 注册时需要验证完整邮箱
   if (!isEmail(registerForm.email + suffix.value)) {
     ElMessage({
       message: t('notEmailMsg'),
@@ -421,7 +425,6 @@ function submitRegister() {
     border-radius: 6px;
   }
   
-  // [修改点] 调整样式，注册框有后缀，登录框没有
   div[v-show="show !== 'login'"] .email-input :deep(.el-input__wrapper){
     border-radius: 6px 0 0 6px;
   }
