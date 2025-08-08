@@ -13,37 +13,18 @@
           <span class="form-title">{{settingStore.settings.title}}</span>
           <span class="form-desc" v-if="show === 'login'">{{$t('loginTitle')}}</span>
           <span class="form-desc" v-else>{{$t('regTitle')}}</span>
+          
+          <!-- [修改点] 登录表单：移除了域名后缀 -->
           <div v-show="show === 'login'">
-            <el-input class="email-input" v-model="form.email" type="text" :placeholder="$t('emailAccount')" autocomplete="off">
-              <template #append>
-                <div @click.stop="openSelect">
-                  <el-select
-                      v-if="show === 'login'"
-                      ref="mySelect"
-                      v-model="suffix"
-                      :placeholder="$t('select')"
-                      class="select"
-                  >
-                    <el-option
-                        v-for="item in domainList"
-                        :key="item"
-                        :label="item"
-                        :value="item"
-                    />
-                  </el-select>
-                  <div style="color: #333">
-                    <span>{{ suffix }}</span>
-                    <Icon class="setting-icon" icon="mingcute:down-small-fill" width="20" height="20"/>
-                  </div>
-                </div>
-              </template>
-            </el-input>
+            <el-input class="email-input" v-model="form.email" type="text" :placeholder="$t('emailAccount')" autocomplete="off" />
             <el-input v-model="form.password" :placeholder="$t('password')" type="password" autocomplete="off">
             </el-input>
             <el-button class="btn" type="primary" @click="submit" :loading="loginLoading"
             >{{$t('loginBtn')}}
             </el-button>
           </div>
+          
+          <!-- [修改点] 注册表单：保留了域名后缀 -->
           <div v-show="show !== 'login'">
             <el-input class="email-input" v-model="registerForm.email" type="text" :placeholder="$t('emailAccount')" autocomplete="off">
               <template #append>
@@ -87,6 +68,7 @@
             >{{$t('regBtn')}}
             </el-button>
           </div>
+          
           <template v-if="settingStore.settings.register === 0">
             <div class="switch" @click="show = 'register'" v-if="show === 'login'">{{$t('noAccount')}} <span>{{$t('regSwitch')}}</span></div>
             <div class="switch" @click="show = 'login'" v-else>{{$t('hasAccount')}} <span>{{$t('loginSwitch')}}</span></div>
@@ -124,6 +106,7 @@ const form = reactive({
   password: '',
 
 });
+// [修改点] 恢复了注册时需要的JS变量
 const mySelect = ref()
 const suffix = ref('')
 const registerForm = reactive({
@@ -177,11 +160,11 @@ const background = computed(() => {
   } : ''
 })
 
-
 const openSelect = () => {
   mySelect.value.toggleMenu()
 }
 
+// [修改点] 修改登录提交逻辑
 const submit = () => {
 
   if (!form.email) {
@@ -192,15 +175,8 @@ const submit = () => {
     })
     return
   }
-
-  if (!isEmail(form.email + suffix.value)) {
-    ElMessage({
-      message: t('notEmailMsg'),
-      type: 'error',
-      plain: true,
-    })
-    return
-  }
+  
+  // 删除了isEmail验证
 
   if (!form.password) {
     ElMessage({
@@ -212,7 +188,8 @@ const submit = () => {
   }
 
   loginLoading.value = true
-  login(form.email + suffix.value, form.password).then(async data => {
+  // 只发送前缀和密码
+  login(form.email, form.password).then(async data => {
     localStorage.setItem('token', data.token)
     const user = await loginUserInfo();
     accountStore.currentAccountId = user.accountId;
@@ -228,7 +205,7 @@ const submit = () => {
   })
 }
 
-
+// [修改点] 恢复注册提交逻辑为原始状态
 function submitRegister() {
 
   if (!registerForm.email) {
@@ -443,8 +420,9 @@ function submitRegister() {
   :deep(.el-input__wrapper) {
     border-radius: 6px;
   }
-
-  .email-input :deep(.el-input__wrapper){
+  
+  // [修改点] 调整样式，注册框有后缀，登录框没有
+  div[v-show="show !== 'login'"] .email-input :deep(.el-input__wrapper){
     border-radius: 6px 0 0 6px;
   }
 
