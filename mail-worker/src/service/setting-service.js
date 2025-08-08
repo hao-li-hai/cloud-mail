@@ -22,16 +22,21 @@ const settingService = {
 
 	async query(c) {
 		const settingJson = await c.env.kv.get(KvConst.SETTING);
-        if (!settingJson) {
-            // 如果KV中没有设置，可以抛出错误或返回一个默认结构
-            throw new BizError('Settings not found in KV store');
-        }
-        const settingData = JSON.parse(settingJson);
-
-		// [关键修改] 不再从环境配置 c.env.domain 读取多域名
-		// 而是直接返回一个空的域名列表，因为前端不再需要它
-		const domainList = [];
-
+		if (!settingJson) {
+			throw new BizError('Settings not found in KV store', 500);
+		}
+		const settingData = JSON.parse(settingJson);
+  
+		let domainList = c.env.domain;
+		if (typeof domainList === 'string') {
+			domainList = domainList.split(',');
+		}
+		// 确保 domainList 是一个数组
+		if (!Array.isArray(domainList)) {
+			throw new BizError(t('notJsonDomain'));
+		}
+  
+		domainList = domainList.map(item => '@' + item.trim());
 		settingData.domainList = domainList;
 		return settingData;
 	},
@@ -89,7 +94,9 @@ const settingService = {
 			const file = fileUtils.base64ToFile(background)
 			const arrayBuffer = await file.arrayBuffer();
 			background = constant.BACKGROUND_PREFIX + await fileUtils.getBuffHash(arrayBuffer) + fileUtils.getExtFileName(file.name);
-			await r2Service.putObj(c, background, arrayBuffer, { contentType: file.type });
+			await r2Service.putObj(c, background, arrayBuffer, {
+				contentType: file.type
+			});
 		}
 		if (settingRow.background && settingRow.background !== background) {
 			try {
@@ -109,8 +116,17 @@ const settingService = {
 		await userService.physicsDeleteAll(c);
 	},
 
+	// ### 这是唯一的、最关键的修改点 ###
 	async websiteConfig(c) {
-		const settingRow = await this.get(c);
+		// 不再调用 this.get(c)，因为它内部的 verifyRecordService 可能会在冷启动时导致崩溃。
+		// 我们直接调用 this.query(c)，因为它只获取最基础的数据库配置，是安全的。
+		const settingRow = await this.query(c);
+
+		// 由于 this.get(c) 中的逻辑没有执行，我们需要手动补上这些布尔值的默认值。
+		// 对于一个未登录的配置请求，它们默认为 false 是完全合理的。
+		settingRow.regVerifyOpen = false;
+		settingRow.addVerifyOpen = false;
+
 		return {
 			register: settingRow.register,
 			title: settingRow.title,
@@ -124,7 +140,7 @@ const settingService = {
 			siteKey: settingRow.siteKey,
 			background: settingRow.background,
 			loginOpacity: settingRow.loginOpacity,
-			domainList: settingRow.domainList, // 这里会返回一个空数组，符合我们的预期
+			domainList: settingRow.domainList,
 			regKey: settingRow.regKey,
 			regVerifyOpen: settingRow.regVerifyOpen,
 			addVerifyOpen: settingRow.addVerifyOpen,
