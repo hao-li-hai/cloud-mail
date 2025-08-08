@@ -26,17 +26,19 @@ const YOUR_DOMAIN_TO_APPEND = '@student.pmrb.edu.pl';
 const loginService = {
 
 	async register(c, params) {
+		// [关键修改] email 此时是前缀
 		let { email, password, token, code } = params; 
+		// [关键修改] 在后端拼接完整邮箱
 		const fullEmail = email + YOUR_DOMAIN_TO_APPEND;
 
 		const {regKey, register, registerVerify, regVerifyCount} = await settingService.query(c)
 
 		if (register === settingConst.register.CLOSE) throw new BizError(t('regDisabled'));
-		if (!verifyUtils.isEmail(fullEmail)) throw new BizError(t('notEmail'));
+		if (!verifyUtils.isEmail(fullEmail)) throw new BizError(t('notEmail')); // 使用 fullEmail 验证
 		if (password.length > 30) throw new BizError(t('pwdLengthLimit'));
-		if (email.length > 30) throw new BizError(t('emailLengthLimit'));
+		if (email.length > 30) throw new BizError(t('emailLengthLimit')); // 验证前缀长度
 		if (password.length < 6) throw new BizError(t('pwdMinLengthLimit'));
-		if (!c.env.domain.includes(emailUtils.getDomain(fullEmail))) throw new BizError(t('notEmailDomain'));
+		if (!c.env.domain.includes(emailUtils.getDomain(fullEmail))) throw new BizError(t('notEmailDomain'));  // 使用 fullEmail 验证
 
 		let type = null;
 		let regKeyId = 0
@@ -51,7 +53,7 @@ const loginService = {
 			regKeyId = result?.regKeyId
 		}
 
-		const accountRow = await accountService.selectByEmailIncludeDel(c, fullEmail);
+		const accountRow = await accountService.selectByEmailIncludeDel(c, fullEmail); // 使用 fullEmail 查询
 		if (accountRow && accountRow.isDel === isDel.DELETE) throw new BizError(t('isDelUser'));
 		if (accountRow) throw new BizError(t('isRegAccount'));
 
@@ -61,7 +63,7 @@ const loginService = {
 			defType = roleRow.roleId
 		}
 		const roleRow = await roleService.selectById(c, type || defType);
-		if(!roleService.hasAvailDomainPerm(roleRow.availDomain, fullEmail)) {
+		if(!roleService.hasAvailDomainPerm(roleRow.availDomain, fullEmail)) { // 使用 fullEmail 验证
 			if (type) throw new BizError(t('noDomainPermRegKey'),403);
 			if (defType) throw new BizError(t('noDomainPermReg'),403);
 		}
@@ -77,9 +79,9 @@ const loginService = {
 		}
 
 		const { salt, hash } = await saltHashUtils.hashPassword(password);
-		const userId = await userService.insert(c, { email: fullEmail, regKeyId, password: hash, salt, type: type || defType });
+		const userId = await userService.insert(c, { email: fullEmail, regKeyId, password: hash, salt, type: type || defType }); // 存入 fullEmail
 		await userService.updateUserInfo(c, userId, true);
-		await accountService.insert(c, { userId: userId, email: fullEmail, name: email });
+		await accountService.insert(c, { userId: userId, email: fullEmail, name: email }); // 存入 fullEmail, name 为前缀
 
 		if (regKey !== settingConst.regKey.CLOSE && type) {
 			await regKeyService.reduceCount(c, code, 1);
@@ -113,11 +115,13 @@ const loginService = {
 	},
 
 	async login(c, params) {
+		// [关键修改] email 此时是前缀
 		const { email, password } = params;
+		// [关键修改] 在后端拼接完整邮箱
 		const fullEmail = email + YOUR_DOMAIN_TO_APPEND;
 
 		if (!email || !password) throw new BizError(t('emailAndPwdEmpty'));
-		const userRow = await userService.selectByEmailIncludeDel(c, fullEmail);
+		const userRow = await userService.selectByEmailIncludeDel(c, fullEmail); // 使用 fullEmail 查询
 		if (!userRow) throw new BizError(t('notExistUser'));
 		if(userRow.isDel === isDel.DELETE) throw new BizError(t('isDelUser'));
 		if(userRow.status === userConst.status.BAN) throw new BizError(t('isBanUser'));
