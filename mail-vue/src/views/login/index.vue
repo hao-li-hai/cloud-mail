@@ -41,67 +41,104 @@
 
 <script setup>
 import router from "@/router";
-import { computed, nextTick, reactive, ref } from "vue";
-import { login, register } from "@/request/login.js";
-import { useSettingStore } from "@/store/setting.js";
-import { useAccountStore } from "@/store/account.js";
-import { useUserStore } from "@/store/user.js";
-import { useUiStore } from "@/store/ui.js";
-import { cvtR2Url } from "@/utils/convert.js";
-import { loginUserInfo } from "@/request/my.js";
-import { permsToRouter } from "@/perm/perm.js";
-import { useI18n } from "vue-i18n";
+import {computed, nextTick, reactive, ref} from "vue";
+import {login} from "@/request/login.js";
+import {register} from "@/request/login.js";
+// [关键修改] 不再需要 isEmail，因为验证在后端进行
+import {useSettingStore} from "@/store/setting.js";
+import {useAccountStore} from "@/store/account.js";
+import {useUserStore} from "@/store/user.js";
+import {useUiStore} from "@/store/ui.js";
+// [关键修改] 不再需要 Icon
+import {cvtR2Url} from "@/utils/convert.js";
+import {loginUserInfo} from "@/request/my.js";
+import {permsToRouter} from "@/perm/perm.js";
+import {useI18n} from "vue-i18n";
 
 const { t } = useI18n();
-const settingStore = useSettingStore();
 const accountStore = useAccountStore();
 const userStore = useUserStore();
 const uiStore = useUiStore();
+const settingStore = useSettingStore();
+const loginLoading = ref(false)
+const show = ref('login')
+const form = reactive({
+  email: '',
+  password: '',
+});
+// [关键修改] 删除了所有和 mySelect, suffix, domainList 相关的变量
+const registerForm = reactive({
+  email: '',
+  password: '',
+  confirmPassword: '',
+  code: null
+})
+const registerLoading = ref(false)
+const verifyShow = ref(false)
+let verifyToken = ''
+let turnstileId = null
+let botJsError = ref(false)
 
-const loginLoading = ref(false);
-const show = ref('login');
-const form = reactive({ email: '', password: '' });
-const registerForm = reactive({ email: '', password: '', confirmPassword: '', code: null });
-const registerLoading = ref(false);
-const verifyShow = ref(false);
-let verifyToken = '';
-let turnstileId = null;
-let botJsError = ref(false);
+window.onTurnstileSuccess = (token) => {
+  verifyToken = token;
+};
+window.onTurnstileError = (e) => {
+  nextTick(() => {
+    if (!turnstileId) {
+      turnstileId = window.turnstile.render('.register-turnstile')
+    } else {
+      window.turnstile.reset(turnstileId);
+    }
+  })
+};
 
-window.onTurnstileSuccess = (token) => { verifyToken = token; };
-window.onTurnstileError = () => { nextTick(() => { if (!turnstileId) { turnstileId = window.turnstile.render('.register-turnstile'); } else { window.turnstile.reset(turnstileId); } }); };
-
-const background = computed(() => (settingStore.settings.background ? { 'background-image': `url(${cvtR2Url(settingStore.settings.background)})` } : {}));
+const background = computed(() => {
+  return settingStore.settings.background ? {
+    'background-image': `url(${cvtR2Url(settingStore.settings.background)})`,
+    'background-repeat': 'no-repeat',
+    'background-size': 'cover',
+    'background-position': 'center'
+  } : ''
+});
 
 const submit = () => {
-    if (!form.email || !form.password) {
-        ElMessage({ message: t('emailAndPwdEmpty'), type: 'error', plain: true });
-        return;
-    }
-    loginLoading.value = true;
-    login(form.email, form.password).then(async (data) => {
-        localStorage.setItem('token', data.token);
-        const user = await loginUserInfo();
-        accountStore.currentAccountId = user.accountId;
-        userStore.user = user;
-        const routers = permsToRouter(user.permKeys);
-        routers.forEach(routerData => { router.addRoute('layout', routerData); });
-        await router.replace({ name: 'layout' });
-        uiStore.showNotice();
-    }).finally(() => { loginLoading.value = false; });
-};
+  if (!form.email) {
+    ElMessage({ message: t('emptyEmailMsg'), type: 'error', plain: true, });
+    return
+  }
+  if (!form.password) {
+    ElMessage({ message: t('emptyPwdMsg'), type: 'error', plain: true, });
+    return
+  }
+  loginLoading.value = true
+  // [关键修改] 不再拼接 suffix
+  login(form.email, form.password).then(async data => {
+    localStorage.setItem('token', data.token)
+    const user = await loginUserInfo();
+    accountStore.currentAccountId = user.accountId;
+    userStore.user = user;
+    const routers = permsToRouter(user.permKeys);
+    routers.forEach(routerData => { router.addRoute('layout', routerData); });
+    await router.replace({name: 'layout'})
+    uiStore.showNotice()
+  }).finally(() => {
+    loginLoading.value = false
+  })
+}
 
 function submitRegister() {
     if (!registerForm.email || !registerForm.password || registerForm.password.length < 6 || registerForm.password !== registerForm.confirmPassword) {
         ElMessage({ message: t('regFormInvalid'), type: 'error', plain: true });
         return;
     }
-    // (此处省略了对注册码和人机验证的详细判断，保持和原文件逻辑一致)
-    registerLoading.value = true;
-    register(registerForm).then(() => {
-        show.value = 'login';
-        ElMessage({ message: t('regSuccessMsg'), type: 'success', plain: true });
-    }).finally(() => { registerLoading.value = false; });
+  registerLoading.value = true
+  // [关键修改] 不再拼接 suffix，直接传递 registerForm
+  register(registerForm).then(({regVerifyOpen}) => {
+    show.value = 'login'
+    ElMessage({ message: t('regSuccessMsg'), type: 'success', plain: true, });
+  }).finally(() => {
+    registerLoading.value = false;
+  });
 }
 </script>
 
